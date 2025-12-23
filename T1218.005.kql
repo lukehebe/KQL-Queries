@@ -1,0 +1,20 @@
+// Hunt for mshta.exe abuse T1218.005 
+
+DeviceProcessEvents 
+| where FileName =~ "mshta.exe" 
+| where ProcessCommandLine has_any ( 
+    "http://", "https://",           // Remote execution 
+    "vbscript:", "javascript:",      // Inline script execution 
+    ".hta", ".sct",                  // HTA/SCT file execution 
+    "GetObject", "Execute"           // Script object abuse 
+) 
+| project  
+    TimeGenerated, 
+    DeviceName, 
+    AccountName, 
+    ProcessCommandLine, 
+    InitiatingProcessFileName, 
+    InitiatingProcessCommandLine 
+| order by TimeGenerated desc 
+
+ 
