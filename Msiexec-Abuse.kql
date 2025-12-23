@@ -1,0 +1,10 @@
+// Covers T1218.007: Msiexec abuse patterns 
+
+DeviceProcessEvents 
+| where FileName =~ "msiexec.exe" 
+| where AccountName != "system"
+| where ProcessCommandLine has_any ("http://", "https://")  // Remote MSI 
+    or (ProcessCommandLine has_any ("/y", "/z") and ProcessCommandLine has ".dll")  // DLL abuse 
+    or ProcessCommandLine has "TRANSFORMS"  // MST transformation 
+| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName 
+| order by TimeGenerated desc 
