@@ -1,0 +1,21 @@
+let MaliciousDomainsRaw = externaldata(data: string)[@"https://threatfox.abuse.ch/export/csv/domains/recent/"] 
+with (format="txt", ignoreFirstRecord=False);
+let MalDomain = materialize (
+    MaliciousDomainsRaw
+    | where data !startswith "#"  // Skip comment lines
+    | where data !startswith "\"first_seen_utc\""  // Skip header
+    | where isnotempty(data)
+    | extend parsed = split(data, '", "')
+    | extend domain = tostring(parsed[2])
+    | extend domain = trim('"', domain)  // Remove quotes
+    | where isnotempty(domain)
+    | distinct domain
+    | project domain
+);
+union SecurityEvent, CommonSecurityLog, EmailUrlInfo, DeviceNetworkEvents
+| where TimeGenerated >= ago(365d)
+| where DomainName has_any (MalDomain) 
+    or DestinationHostName has_any (MalDomain) 
+    or UrlDomain has_any (MalDomain) 
+    or RemoteUrl has_any (MalDomain)
+//| distinct RequestContext
